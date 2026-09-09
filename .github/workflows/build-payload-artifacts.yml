@@ -1,0 +1,129 @@
+name: Build S24 FE Payload Artifact
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'Makefile'
+      - 'support/targets-v3.json'
+      - 'tools/**'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: payload-artifact-s721b
+  cancel-in-progress: false
+
+env:
+  TARGET: r12s-S721BXXSCDZF3
+  ARTIFACT_PATH: artifacts/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
+
+jobs:
+  build:
+    name: Rebuild S24 FE artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-35'
+          accept-android-sdk-licenses: true
+
+      - name: Set up NDK r28
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28
+
+      - name: Resolve NDK path
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK_HOME="$(find "${ANDROID_SDK_ROOT}/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          test -n "$NDK_HOME"
+          echo "ANDROID_NDK_HOME=$NDK_HOME" >> "$GITHUB_ENV"
+          echo "Using ANDROID_NDK_HOME=$NDK_HOME"
+
+      - name: Build only S24 FE target
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "src/targets/${TARGET}/target.h"
+          echo "=== BUILD ${TARGET} ONLY ==="
+          make clean TARGET="${TARGET}"
+          make all release TARGET="${TARGET}"
+
+          output="build/${TARGET}/cve-2026-43499-app.release.so"
+          test -f "$output"
+          size="$(stat -c %s "$output")"
+          echo "Built $output ($size bytes)"
+
+          mkdir -p "$(dirname "${ARTIFACT_PATH}")" diagnostics
+          install -m 0644 "$output" "${ARTIFACT_PATH}"
+          sha256sum "${ARTIFACT_PATH}" | tee diagnostics/s721b-app.sha256
+
+      - name: Verify S24 FE artifact only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "${ARTIFACT_PATH}"
+          actual="$(stat -c %s "${ARTIFACT_PATH}")"
+          test "$actual" -eq 104128
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          from urllib.parse import urlparse
+
+          target = "r12s-S721BXXSCDZF3"
+          manifest = json.loads(Path('support/targets-v3.json').read_text())
+          candidates = [p for p in manifest.get('payloads', []) if p.get('payloadId') == target]
+          if not candidates:
+              raise SystemExit(f"S24 FE profile not found in manifest: {target}")
+
+          p = candidates[0]
+          url = p['exploit']['url']
+          path = urlparse(url).path
+          expected_suffix = f"/artifacts/{target}/cve-2026-43499-app.so"
+          if not path.endswith(expected_suffix):
+              raise SystemExit(f"S24 FE exploit URL does not point to {expected_suffix}: {url}")
+
+          expected = int(p['exploit']['size'])
+          actual = Path('artifacts') / target / 'cve-2026-43499-app.so'
+          if actual.stat().st_size != expected:
+              raise SystemExit(f"S24 FE artifact size mismatch: {actual.stat().st_size} != {expected}")
+
+          print(f"verified S24 FE target {target}: {actual.stat().st_size} bytes")
+          PY
+
+      - name: Upload build diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: s721b-payload-build-diagnostics
+          path: diagnostics/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Commit regenerated S24 FE artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "${ARTIFACT_PATH}"
+          if git diff --cached --quiet; then
+            echo "No S24 FE artifact changes."
+            exit 0
+          fi
+          git commit -m "ci: rebuild S24 FE payload artifact [skip ci]"
+          git push origin HEAD:main
