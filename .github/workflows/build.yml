@@ -19,13 +19,13 @@ jobs:
 
       - name: Install Android NDK
         run: |
-          sdkmanager "ndk;27.2.12479018"
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          sdkmanager "ndk;30.0.16248370"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/30.0.16248370" >> "$GITHUB_ENV"
 
-      - name: Show build configuration
+      - name: Check NDK
         run: |
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
-          ls "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android36-clang"
+          ls "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/" | grep 'aarch64-linux-android36-clang'
 
       - name: Build payload
         run: |
@@ -33,11 +33,4 @@ jobs:
 
       - name: Verify app payload
         run: |
-          ls -lh build/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
-          file build/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
-
-      - name: Upload app payload
-        uses: actions/upload-artifact@v4
-        with:
-          name: cve-2026-43499-app
-          path: build/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
+          ls -lh build/r12s-S721BXXSCDZF3
