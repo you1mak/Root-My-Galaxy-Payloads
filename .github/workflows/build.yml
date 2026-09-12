@@ -1,288 +1,163 @@
-name: Build S24 FE app payload
+name: Build S24 FE Payload Artifacts
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - main
     paths:
       - 'src/**'
       - 'Makefile'
-      - '.github/workflows/build.yml'
+      - 'support/targets-v3.json'
+      - 'tools/**'
+      - '.github/workflows/**'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Profile to build'
+        required: true
+        default: s721b
+        type: choice
+        options:
+          - s721b
+          - s721w
+          - all
 
 permissions:
   contents: write
 
+concurrency:
+  group: payload-artifact-s721
+  cancel-in-progress: false
+
 env:
-  TARGET: r12s-S721BXXSCDZF3
-  NDK_VERSION: '30.0.16248370'
-  APP_PAYLOAD: build/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
-  REPO_PAYLOAD: artifacts/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
-  SUPPORT_JSON: support/targets-v3.json
+  B_TARGET: r12s-S721BXXSCDZF3
+  W_TARGET: r12s-S721WVLSCDZF4
+  B_ARTIFACT_PATH: artifacts/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
+  W_ARTIFACT_PATH: artifacts/r12s-S721WVLSCDZF4/cve-2026-43499-app.so
 
 jobs:
   build:
-    name: Build cve-2026-43499-app.so
+    name: Build selected S24 FE profile(s)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-35'
+          accept-android-sdk-licenses: true
 
-      - name: Install Android NDK
+      - name: Set up NDK r28
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28
+
+      - name: Resolve NDK path
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager "ndk;${NDK_VERSION}"
-          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          NDK_HOME="$(find "${ANDROID_SDK_ROOT}/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          test -n "$NDK_HOME"
+          echo "ANDROID_NDK_HOME=$NDK_HOME" >> "$GITHUB_ENV"
+          echo "Using ANDROID_NDK_HOME=$NDK_HOME"
 
-      - name: Verify NDK
+      - name: Select profiles
+        id: select
         shell: bash
         run: |
           set -euo pipefail
+          selected="${{ github.event.inputs.target || 's721b' }}"
+          build_b=0
+          build_w=0
+          if [ "$selected" = "s721b" ]; then build_b=1; fi
+          if [ "$selected" = "s721w" ]; then build_w=1; fi
+          if [ "$selected" = "all" ]; then build_b=1; build_w=1; fi
 
-          test -x "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android36-clang"
-
-          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
-
-          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android36-clang" \
-            --version | head -n 1
-
-      - name: Verify target sources
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          test -f "src/targets/${TARGET}/target.h"
-          test -f "src/main.c"
-          test -f "src/fops.c"
-
-          grep -F \
-            '#define APP_PRODUCTION_STACK_PI_RIGHT_ONLY 0' \
-            "src/targets/${TARGET}/target.h"
-
-          test "$(grep -c \
-            'APP_PRODUCTION_STACK_PI_RIGHT_ONLY' \
-            "src/targets/${TARGET}/target.h")" -ge 1
-
-      - name: Build app payload only
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          make TARGET="${TARGET}" "${APP_PAYLOAD}"
-
-      - name: Verify output
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          test -f "${APP_PAYLOAD}"
-
-          SIZE=$(stat -c '%s' "${APP_PAYLOAD}")
-
-          echo "Payload size: ${SIZE} bytes"
-
-          file "${APP_PAYLOAD}"
-
-          sha256sum "${APP_PAYLOAD}"
-
-      - name: Copy payload to repository
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          mkdir -p "$(dirname "${REPO_PAYLOAD}")"
-
-          cp -f \
-            "${APP_PAYLOAD}" \
-            "${REPO_PAYLOAD}"
-
-          test -f "${REPO_PAYLOAD}"
-
-          echo "Repository payload:"
-          ls -lh "${REPO_PAYLOAD}"
-
-      - name: Update exploit size in targets-v3.json
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "Working directory:"
-          pwd
-
-          echo "Checking support directory:"
-          ls -la support
-
-          test -f "${SUPPORT_JSON}"
-
-          echo "Manifest path: ${SUPPORT_JSON}"
-
-          SIZE=$(stat -c '%s' "${APP_PAYLOAD}")
-
-          echo "Payload size: ${SIZE} bytes"
-
-          python3 - "${SUPPORT_JSON}" "${TARGET}" "${SIZE}" <<'PY'
-          import json
-          import sys
-
-          path = sys.argv[1]
-          target = sys.argv[2]
-          size = int(sys.argv[3])
-
-          print(f"Reading: {path}")
-          print(f"Target: {target}")
-          print(f"New size: {size}")
-
-          with open(path, "r", encoding="utf-8") as f:
-              data = json.load(f)
-
-          if "payloads" not in data:
-              raise SystemExit(
-                  "ERROR: 'payloads' not found in manifest"
-              )
-
-          found = False
-
-          for payload in data["payloads"]:
-              print(
-                  f"Checking payload: "
-                  f"{payload.get('payloadId')}"
-              )
-
-              if payload.get("payloadId") == target:
-                  if "exploit" not in payload:
-                      raise SystemExit(
-                          f"ERROR: exploit section not found for {target}"
-                      )
-
-                  old_size = payload["exploit"].get("size")
-
-                  print(f"Old exploit size: {old_size}")
-                  print(f"New exploit size: {size}")
-
-                  payload["exploit"]["size"] = size
-
-                  found = True
-                  break
-
-          if not found:
-              raise SystemExit(
-                  f"ERROR: Payload ID not found: {target}"
-              )
-
-          with open(path, "w", encoding="utf-8") as f:
-              json.dump(
-                  data,
-                  f,
-                  indent=2,
-                  ensure_ascii=False
-              )
-              f.write("\n")
-
-          print(
-              f"SUCCESS: Updated exploit size "
-              f"to {size} bytes"
-          )
-          PY
-
-      - name: Verify support manifest
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          SIZE=$(stat -c '%s' "${APP_PAYLOAD}")
-
-          python3 - "${SUPPORT_JSON}" "${TARGET}" "${SIZE}" <<'PY'
-          import json
-          import sys
-
-          path = sys.argv[1]
-          target = sys.argv[2]
-          expected_size = int(sys.argv[3])
-
-          with open(path, "r", encoding="utf-8") as f:
-              data = json.load(f)
-
-          found = False
-
-          for payload in data["payloads"]:
-              if payload.get("payloadId") == target:
-                  found = True
-
-                  actual_size = payload["exploit"]["size"]
-
-                  print(
-                      f"Manifest size: {actual_size} bytes"
-                  )
-
-                  print(
-                      f"Actual file size: {expected_size} bytes"
-                  )
-
-                  if actual_size != expected_size:
-                      raise SystemExit(
-                          f"ERROR: Size mismatch: "
-                          f"manifest={actual_size}, "
-                          f"file={expected_size}"
-                      )
-
-                  print(
-                      f"SUCCESS: Size verified: "
-                      f"{actual_size} bytes"
-                  )
-
-                  break
-
-          if not found:
-              raise SystemExit(
-                  f"ERROR: Payload ID not found: {target}"
-              )
-          PY
-
-      - name: Show changes
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "Git status:"
-          git status --short
-
-          echo
-          echo "Manifest diff:"
-          git diff -- "${SUPPORT_JSON}"
-
-      - name: Commit payload and manifest
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          git config user.name "github-actions[bot]"
-          git config user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add \
-            "${REPO_PAYLOAD}" \
-            "${SUPPORT_JSON}"
-
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-            exit 0
+          if [ "${{ github.event_name }}" = "push" ]; then
+            build_b=1
+            changed="$(git diff --name-only HEAD^ HEAD)"
+            if printf '%s\n' "$changed" | grep -q '^src/targets/r12s-S721WVLSCDZF4/'; then
+              build_w=1
+            fi
           fi
 
-          git commit \
-            -m "Build ${TARGET} app payload [skip ci]"
+          echo "build_b=$build_b" >> "$GITHUB_OUTPUT"
+          echo "build_w=$build_w" >> "$GITHUB_OUTPUT"
+          echo "selected=$selected" >> "$GITHUB_OUTPUT"
+          echo "S721B build=$build_b"
+          echo "S721W build=$build_w"
 
-          git push
+      - name: Build S721B
+        if: steps.select.outputs.build_b == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "src/targets/${B_TARGET}/target.h"
+          make clean TARGET="${B_TARGET}"
+          make all release TARGET="${B_TARGET}"
+          output="build/${B_TARGET}/cve-2026-43499-app.release.so"
+          test -f "$output"
+          test "$(stat -c %s "$output")" -le 104128
+          mkdir -p "$(dirname "${B_ARTIFACT_PATH}")" diagnostics
+          install -m 0644 "$output" "${B_ARTIFACT_PATH}"
+          sha256sum "${B_ARTIFACT_PATH}" | tee diagnostics/s721b-app.sha256
 
-      - name: Upload app payload
+      - name: Build experimental S721W
+        if: steps.select.outputs.build_w == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "src/targets/${W_TARGET}/target.h"
+          make clean TARGET="${W_TARGET}"
+          make all release TARGET="${W_TARGET}"
+          output="build/${W_TARGET}/cve-2026-43499-app.release.so"
+          test -f "$output"
+          test "$(stat -c %s "$output")" -le 104128
+          mkdir -p "$(dirname "${W_ARTIFACT_PATH}")" diagnostics
+          install -m 0644 "$output" "${W_ARTIFACT_PATH}"
+          sha256sum "${W_ARTIFACT_PATH}" | tee diagnostics/s721w-dzf4-app.sha256
+
+      - name: Verify artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.select.outputs.build_b }}" = "1" ]; then
+            test -f "${B_ARTIFACT_PATH}"
+            test "$(stat -c %s "${B_ARTIFACT_PATH}")" -le 104128
+          fi
+          if [ "${{ steps.select.outputs.build_w }}" = "1" ]; then
+            test -f "${W_ARTIFACT_PATH}"
+            test "$(stat -c %s "${W_ARTIFACT_PATH}")" -le 104128
+          fi
+
+      - name: Upload diagnostics
         uses: actions/upload-artifact@v4
         with:
-          name: cve-2026-43499-app
-          path: ${{ env.APP_PAYLOAD }}
+          name: s721-payload-build-diagnostics
+          path: diagnostics/
           if-no-files-found: error
           retention-days: 14
+
+      - name: Commit regenerated artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ "${{ steps.select.outputs.build_b }}" = "1" ]; then
+            git add "${B_ARTIFACT_PATH}"
+          fi
+          if [ "${{ steps.select.outputs.build_w }}" = "1" ]; then
+            git add "${W_ARTIFACT_PATH}"
+          fi
+          if git diff --cached --quiet; then
+            echo "No artifact changes."
+            exit 0
+          fi
+          git commit -m "ci: rebuild S721 FE payload artifacts [skip ci]"
+          git push origin HEAD:main
