@@ -10,6 +10,7 @@ on:
       - 'support/targets-v3.json'
       - 'tools/**'
       - '.github/workflows/**'
+
   workflow_dispatch:
     inputs:
       target:
@@ -30,6 +31,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  NDK_VERSION: '30.0.16248370'
   B_TARGET: r12s-S721BXXSCDZF3
   W_TARGET: r12s-S721WVLSCDZF4
   B_ARTIFACT_PATH: artifacts/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
@@ -40,6 +42,7 @@ jobs:
     name: Build selected S24 FE profile(s)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,39 +52,61 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
-          packages: 'platform-tools platforms;android-35'
+          packages: |
+            platform-tools
+            platforms;android-36
+            ndk;30.0.16248370
           accept-android-sdk-licenses: true
 
-      - name: Set up NDK r28
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r28
-
-      - name: Resolve NDK path
+      - name: Configure NDK
         shell: bash
         run: |
           set -euo pipefail
-          NDK_HOME="$(find "${ANDROID_SDK_ROOT}/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-          test -n "$NDK_HOME"
+
+          NDK_HOME="${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}"
+
+          test -d "$NDK_HOME"
+          test -x "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android36-clang"
+
           echo "ANDROID_NDK_HOME=$NDK_HOME" >> "$GITHUB_ENV"
-          echo "Using ANDROID_NDK_HOME=$NDK_HOME"
+
+          echo "Using NDK:"
+          echo "$NDK_HOME"
+
+          echo "Compiler:"
+          "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android36-clang" --version
 
       - name: Select profiles
         id: select
         shell: bash
         run: |
           set -euo pipefail
+
           selected="${{ github.event.inputs.target || 's721b' }}"
+
           build_b=0
           build_w=0
-          if [ "$selected" = "s721b" ]; then build_b=1; fi
-          if [ "$selected" = "s721w" ]; then build_w=1; fi
-          if [ "$selected" = "all" ]; then build_b=1; build_w=1; fi
+
+          if [ "$selected" = "s721b" ]; then
+            build_b=1
+          fi
+
+          if [ "$selected" = "s721w" ]; then
+            build_w=1
+          fi
+
+          if [ "$selected" = "all" ]; then
+            build_b=1
+            build_w=1
+          fi
 
           if [ "${{ github.event_name }}" = "push" ]; then
             build_b=1
+
             changed="$(git diff --name-only HEAD^ HEAD)"
-            if printf '%s\n' "$changed" | grep -q '^src/targets/r12s-S721WVLSCDZF4/'; then
+
+            if printf '%s\n' "$changed" |
+              grep -q '^src/targets/r12s-S721WVLSCDZF4/'; then
               build_w=1
             fi
           fi
@@ -89,6 +114,7 @@ jobs:
           echo "build_b=$build_b" >> "$GITHUB_OUTPUT"
           echo "build_w=$build_w" >> "$GITHUB_OUTPUT"
           echo "selected=$selected" >> "$GITHUB_OUTPUT"
+
           echo "S721B build=$build_b"
           echo "S721W build=$build_w"
 
@@ -97,39 +123,57 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           test -f "src/targets/${B_TARGET}/target.h"
+
           make clean TARGET="${B_TARGET}"
           make all release TARGET="${B_TARGET}"
+
           output="build/${B_TARGET}/cve-2026-43499-app.release.so"
+
           test -f "$output"
           test "$(stat -c %s "$output")" -le 104128
+
           mkdir -p "$(dirname "${B_ARTIFACT_PATH}")" diagnostics
+
           install -m 0644 "$output" "${B_ARTIFACT_PATH}"
-          sha256sum "${B_ARTIFACT_PATH}" | tee diagnostics/s721b-app.sha256
+
+          sha256sum "${B_ARTIFACT_PATH}" |
+            tee diagnostics/s721b-app.sha256
 
       - name: Build experimental S721W
         if: steps.select.outputs.build_w == '1'
         shell: bash
         run: |
           set -euo pipefail
+
           test -f "src/targets/${W_TARGET}/target.h"
+
           make clean TARGET="${W_TARGET}"
           make all release TARGET="${W_TARGET}"
+
           output="build/${W_TARGET}/cve-2026-43499-app.release.so"
+
           test -f "$output"
           test "$(stat -c %s "$output")" -le 104128
+
           mkdir -p "$(dirname "${W_ARTIFACT_PATH}")" diagnostics
+
           install -m 0644 "$output" "${W_ARTIFACT_PATH}"
-          sha256sum "${W_ARTIFACT_PATH}" | tee diagnostics/s721w-dzf4-app.sha256
+
+          sha256sum "${W_ARTIFACT_PATH}" |
+            tee diagnostics/s721w-dzf4-app.sha256
 
       - name: Verify artifacts
         shell: bash
         run: |
           set -euo pipefail
+
           if [ "${{ steps.select.outputs.build_b }}" = "1" ]; then
             test -f "${B_ARTIFACT_PATH}"
             test "$(stat -c %s "${B_ARTIFACT_PATH}")" -le 104128
           fi
+
           if [ "${{ steps.select.outputs.build_w }}" = "1" ]; then
             test -f "${W_ARTIFACT_PATH}"
             test "$(stat -c %s "${W_ARTIFACT_PATH}")" -le 104128
@@ -147,17 +191,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
           if [ "${{ steps.select.outputs.build_b }}" = "1" ]; then
             git add "${B_ARTIFACT_PATH}"
           fi
+
           if [ "${{ steps.select.outputs.build_w }}" = "1" ]; then
             git add "${W_ARTIFACT_PATH}"
           fi
+
           if git diff --cached --quiet; then
             echo "No artifact changes."
             exit 0
           fi
+
           git commit -m "ci: rebuild S721 FE payload artifacts [skip ci]"
           git push origin HEAD:main
