@@ -1,0 +1,44 @@
+name: Build Root-My-Galaxy Payload
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        uses: android-actions/setup-ndk@v3
+        with:
+          ndk-version: '27.2.12479018'
+
+      - name: Build payload
+        run: |
+          make TARGET=r12s-S721BXXSCDZF3 all
+
+      - name: Verify app payload
+        run: |
+          ls -lh build/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
+          file build/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
+
+      - name: Upload app payload
+        uses: actions/upload-artifact@v4
+        with:
+          name: cve-2026-43499-app
+          path: build/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
