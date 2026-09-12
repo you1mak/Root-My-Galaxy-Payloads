@@ -44,30 +44,43 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           test -x "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android36-clang"
+
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
-          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android36-clang" --version | head -n 1
+
+          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android36-clang" \
+            --version | head -n 1
 
       - name: Verify target sources
         shell: bash
         run: |
           set -euo pipefail
+
           test -f "src/targets/${TARGET}/target.h"
           test -f "src/main.c"
           test -f "src/fops.c"
-          grep -F '#define APP_PRODUCTION_STACK_PI_RIGHT_ONLY 0' "src/targets/${TARGET}/target.h"
-          test "$(grep -c 'APP_PRODUCTION_STACK_PI_RIGHT_ONLY' "src/targets/${TARGET}/target.h")" -ge 1
+
+          grep -F \
+            '#define APP_PRODUCTION_STACK_PI_RIGHT_ONLY 0' \
+            "src/targets/${TARGET}/target.h"
+
+          test "$(grep -c \
+            'APP_PRODUCTION_STACK_PI_RIGHT_ONLY' \
+            "src/targets/${TARGET}/target.h")" -ge 1
 
       - name: Build app payload only
         shell: bash
         run: |
           set -euo pipefail
+
           make TARGET="${TARGET}" "${APP_PAYLOAD}"
 
       - name: Verify output
         shell: bash
         run: |
           set -euo pipefail
+
           test -f "${APP_PAYLOAD}"
 
           SIZE=$(stat -c '%s' "${APP_PAYLOAD}")
@@ -75,6 +88,7 @@ jobs:
           echo "Payload size: ${SIZE} bytes"
 
           file "${APP_PAYLOAD}"
+
           sha256sum "${APP_PAYLOAD}"
 
       - name: Copy payload to repository
@@ -83,14 +97,34 @@ jobs:
           set -euo pipefail
 
           mkdir -p "$(dirname "${REPO_PAYLOAD}")"
-          cp -f "${APP_PAYLOAD}" "${REPO_PAYLOAD}"
 
-      - name: Update exploit size in target-v3.json
+          cp -f \
+            "${APP_PAYLOAD}" \
+            "${REPO_PAYLOAD}"
+
+          test -f "${REPO_PAYLOAD}"
+
+          echo "Repository payload:"
+          ls -lh "${REPO_PAYLOAD}"
+
+      - name: Update exploit size in targets-v3.json
         shell: bash
         run: |
           set -euo pipefail
 
+          echo "Working directory:"
+          pwd
+
+          echo "Checking support directory:"
+          ls -la support
+
+          test -f "${SUPPORT_JSON}"
+
+          echo "Manifest path: ${SUPPORT_JSON}"
+
           SIZE=$(stat -c '%s' "${APP_PAYLOAD}")
+
+          echo "Payload size: ${SIZE} bytes"
 
           python3 - "${SUPPORT_JSON}" "${TARGET}" "${SIZE}" <<'PY'
           import json
@@ -100,25 +134,60 @@ jobs:
           target = sys.argv[2]
           size = int(sys.argv[3])
 
+          print(f"Reading: {path}")
+          print(f"Target: {target}")
+          print(f"New size: {size}")
+
           with open(path, "r", encoding="utf-8") as f:
               data = json.load(f)
+
+          if "payloads" not in data:
+              raise SystemExit(
+                  "ERROR: 'payloads' not found in manifest"
+              )
 
           found = False
 
           for payload in data["payloads"]:
+              print(
+                  f"Checking payload: "
+                  f"{payload.get('payloadId')}"
+              )
+
               if payload.get("payloadId") == target:
+                  if "exploit" not in payload:
+                      raise SystemExit(
+                          f"ERROR: exploit section not found for {target}"
+                      )
+
+                  old_size = payload["exploit"].get("size")
+
+                  print(f"Old exploit size: {old_size}")
+                  print(f"New exploit size: {size}")
+
                   payload["exploit"]["size"] = size
+
                   found = True
                   break
 
           if not found:
-              raise SystemExit(f"Payload ID not found: {target}")
+              raise SystemExit(
+                  f"ERROR: Payload ID not found: {target}"
+              )
 
           with open(path, "w", encoding="utf-8") as f:
-              json.dump(data, f, indent=2, ensure_ascii=False)
+              json.dump(
+                  data,
+                  f,
+                  indent=2,
+                  ensure_ascii=False
+              )
               f.write("\n")
 
-          print(f"Updated exploit size to {size} bytes")
+          print(
+              f"SUCCESS: Updated exploit size "
+              f"to {size} bytes"
+          )
           PY
 
       - name: Verify support manifest
@@ -139,20 +208,53 @@ jobs:
           with open(path, "r", encoding="utf-8") as f:
               data = json.load(f)
 
+          found = False
+
           for payload in data["payloads"]:
               if payload.get("payloadId") == target:
+                  found = True
+
                   actual_size = payload["exploit"]["size"]
+
+                  print(
+                      f"Manifest size: {actual_size} bytes"
+                  )
+
+                  print(
+                      f"Actual file size: {expected_size} bytes"
+                  )
 
                   if actual_size != expected_size:
                       raise SystemExit(
-                          f"Size mismatch: manifest={actual_size}, file={expected_size}"
+                          f"ERROR: Size mismatch: "
+                          f"manifest={actual_size}, "
+                          f"file={expected_size}"
                       )
 
-                  print(f"Verified: exploit size = {actual_size} bytes")
+                  print(
+                      f"SUCCESS: Size verified: "
+                      f"{actual_size} bytes"
+                  )
+
                   break
-          else:
-              raise SystemExit(f"Payload ID not found: {target}")
+
+          if not found:
+              raise SystemExit(
+                  f"ERROR: Payload ID not found: {target}"
+              )
           PY
+
+      - name: Show changes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Git status:"
+          git status --short
+
+          echo
+          echo "Manifest diff:"
+          git diff -- "${SUPPORT_JSON}"
 
       - name: Commit payload and manifest
         shell: bash
@@ -160,16 +262,21 @@ jobs:
           set -euo pipefail
 
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add "${REPO_PAYLOAD}" "${SUPPORT_JSON}"
+          git add \
+            "${REPO_PAYLOAD}" \
+            "${SUPPORT_JSON}"
 
           if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
           fi
 
-          git commit -m "Build ${TARGET} app payload [skip ci]"
+          git commit \
+            -m "Build ${TARGET} app payload [skip ci]"
+
           git push
 
       - name: Upload app payload
