@@ -1,36 +1,80 @@
-name: Build Root-My-Galaxy Payload
+name: Build S24 FE app payload
 
 on:
   workflow_dispatch:
   push:
     branches:
       - main
+    paths:
+      - 'src/**'
+      - 'Makefile'
+      - '.github/workflows/build.yml'
+
+permissions:
+  contents: read
+
+env:
+  TARGET: r12s-S721BXXSCDZF3
+  NDK_VERSION: '30.0.16248370'
+  APP_PAYLOAD: build/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
 
 jobs:
   build:
+    name: Build cve-2026-43499-app.so
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Install Android NDK
+        shell: bash
         run: |
-          sdkmanager "ndk;30.0.16248370"
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/30.0.16248370" >> "$GITHUB_ENV"
+          set -euo pipefail
+          sdkmanager "ndk;${NDK_VERSION}"
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
 
-      - name: Check NDK
+      - name: Verify NDK
+        shell: bash
         run: |
+          set -euo pipefail
+          test -x "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android36-clang"
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
-          ls "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/" | grep 'aarch64-linux-android36-clang'
+          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android36-clang" --version | head -n 1
 
-      - name: Build payload
+      - name: Verify target sources
+        shell: bash
         run: |
-          make TARGET=r12s-S721BXXSCDZF3 all
+          set -euo pipefail
+          test -f "src/targets/${TARGET}/target.h"
+          test -f "src/main.c"
+          test -f "src/fops.c"
+          grep -F '#define APP_PRODUCTION_STACK_PI_RIGHT_ONLY 0' "src/targets/${TARGET}/target.h"
+          test "$(grep -c 'APP_PRODUCTION_STACK_PI_RIGHT_ONLY' "src/targets/${TARGET}/target.h")" -ge 1
 
-      - name: Verify app payload
+      - name: Build app payload only
+        shell: bash
         run: |
-          ls -lh build/r12s-S721BXXSCDZF3
+          set -euo pipefail
+          make TARGET="${TARGET}" "${APP_PAYLOAD}"
+
+      - name: Verify output
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "${APP_PAYLOAD}"
+          stat -c 'size=%s bytes' "${APP_PAYLOAD}"
+          file "${APP_PAYLOAD}"
+          sha256sum "${APP_PAYLOAD}"
+
+      - name: Upload app payload
+        uses: actions/upload-artifact@v4
+        with:
+          name: cve-2026-43499-app
+          path: ${{ env.APP_PAYLOAD }}
+          if-no-files-found: error
+          retention-days: 14
