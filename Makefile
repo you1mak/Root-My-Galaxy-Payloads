@@ -5,11 +5,8 @@ OUTDIR ?= build/$(TARGET)
 TARGET_HEADER := src/targets/$(TARGET)/target.h
 TARGET_INCLUDE := targets/$(TARGET)/target.h
 
-# Automatically find Android NDK if ANDROID_NDK_HOME is not set.
 ifndef ANDROID_NDK_HOME
-ifneq ($(wildcard /usr/local/lib/android/sdk/ndk/*),)
-ANDROID_NDK_HOME := $(shell ls -d /usr/local/lib/android/sdk/ndk/* | sort -V | tail -1)
-endif
+$(error ANDROID_NDK_HOME is not set)
 endif
 
 UNAME_S := $(shell uname -s)
@@ -21,7 +18,7 @@ TARGET_CC := $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch
 endif
 
 ifeq ($(wildcard $(TARGET_CC)),)
-$(error Android NDK compiler not found: $(TARGET_CC). Set ANDROID_NDK_HOME to a valid Android NDK.)
+$(error Android NDK compiler not found: $(TARGET_CC))
 endif
 
 PRELOAD := $(OUTDIR)/cve-2026-43499
@@ -120,26 +117,4 @@ info:
 clean:
 	rm -rf $(OUTDIR)
 
-
-
-لكن انتبه: هذا يصلح مشكلة اختيار NDK فقط. إذا كان الـworkflow فعلاً يثبت NDK 30، فالرسالة القديمة التي تشير إلى 29.0.14206865 يجب أن تختفي.
-
-
-والأفضل أن يكون في الـworkflow قبل make:
-
-
-- name: Set up NDK
-  uses: android-actions/setup-android@v3
-
-- name: Install NDK
-  run: sdkmanager "ndk;30.0.16248370"
-
-- name: Build
-  run: |
-    export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/30.0.16248370"
-    make TARGET=r12s-S721BXXSCDZF3 all
-
-
-
-إذا أرسلت لي ملف workflow الحالي كاملًا أقدر أضبط الاثنين معًا بحيث ما يبقى تعارض NDK 29/30.
 
