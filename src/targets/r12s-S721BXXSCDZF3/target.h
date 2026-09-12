@@ -258,4 +258,6 @@
 #define FOPS_SPLICE_READ_OFF 0xc8
 #define FOPS_SHOW_FDINFO_OFF 0xe0
 
+#define APP_DEFAULT_FAST_KSNITCH 1
+
 #endif
