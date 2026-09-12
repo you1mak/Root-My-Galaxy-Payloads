@@ -11,12 +11,13 @@ on:
       - '.github/workflows/build.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   TARGET: r12s-S721BXXSCDZF3
   NDK_VERSION: '30.0.16248370'
   APP_PAYLOAD: build/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
+  REPO_PAYLOAD: artifacts/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
 
 jobs:
   build:
@@ -70,6 +71,31 @@ jobs:
           stat -c 'size=%s bytes' "${APP_PAYLOAD}"
           file "${APP_PAYLOAD}"
           sha256sum "${APP_PAYLOAD}"
+
+      - name: Copy payload to repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "${REPO_PAYLOAD}")"
+          cp -f "${APP_PAYLOAD}" "${REPO_PAYLOAD}"
+
+      - name: Commit payload to repository
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add "${REPO_PAYLOAD}"
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Build ${TARGET} app payload [skip ci]"
+          git push
 
       - name: Upload app payload
         uses: actions/upload-artifact@v4
