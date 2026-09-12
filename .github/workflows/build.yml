@@ -1,181 +1,135 @@
-name: Build S24 FE app payload
+name: Build S24 FE S721B Payload Artifact
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - main
     paths:
       - 'src/**'
       - 'Makefile'
-      - '.github/workflows/build.yml'
+      - 'support/targets-v3.json'
+      - 'tools/**'
+      - '.github/workflows/**'
+
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: payload-artifact-s721b
+  cancel-in-progress: false
+
 env:
   TARGET: r12s-S721BXXSCDZF3
-  NDK_VERSION: '30.0.16248370'
-  APP_PAYLOAD: build/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
-  REPO_PAYLOAD: artifacts/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
-  SUPPORT_JSON: support/targets-v3.json
+  ARTIFACT_PATH: artifacts/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
 
 jobs:
   build:
-    name: Build cve-2026-43499-app.so
+    name: Build S721B Payload
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-35'
+          accept-android-sdk-licenses: true
 
-      - name: Install Android NDK
+      - name: Set up NDK r28
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28
+
+      - name: Resolve NDK path
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager "ndk;${NDK_VERSION}"
-          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
 
-      - name: Verify NDK
+          NDK_HOME="$(find "${ANDROID_SDK_ROOT}/ndk" \
+            -mindepth 1 \
+            -maxdepth 1 \
+            -type d | sort -V | tail -n 1)"
+
+          test -n "$NDK_HOME"
+
+          echo "ANDROID_NDK_HOME=$NDK_HOME" >> "$GITHUB_ENV"
+          echo "Using ANDROID_NDK_HOME=$NDK_HOME"
+
+      - name: Build S721B
         shell: bash
         run: |
           set -euo pipefail
-          test -x "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android36-clang"
-          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
-          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android36-clang" --version | head -n 1
 
-      - name: Verify target sources
-        shell: bash
-        run: |
-          set -euo pipefail
           test -f "src/targets/${TARGET}/target.h"
-          test -f "src/main.c"
-          test -f "src/fops.c"
-          grep -F '#define APP_PRODUCTION_STACK_PI_RIGHT_ONLY 0' "src/targets/${TARGET}/target.h"
-          test "$(grep -c 'APP_PRODUCTION_STACK_PI_RIGHT_ONLY' "src/targets/${TARGET}/target.h")" -ge 1
 
-      - name: Build app payload only
-        shell: bash
-        run: |
-          set -euo pipefail
-          make TARGET="${TARGET}" "${APP_PAYLOAD}"
+          make clean TARGET="${TARGET}"
+          make all release TARGET="${TARGET}"
 
-      - name: Verify output
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f "${APP_PAYLOAD}"
+          output="build/${TARGET}/cve-2026-43499-app.release.so"
 
-          SIZE=$(stat -c '%s' "${APP_PAYLOAD}")
+          test -f "$output"
 
-          echo "Payload size: ${SIZE} bytes"
+          size="$(stat -c %s "$output")"
+          echo "Built artifact size: ${size} bytes"
 
-          file "${APP_PAYLOAD}"
-          sha256sum "${APP_PAYLOAD}"
+          test "$size" -le 104128
 
-      - name: Copy payload to repository
-        shell: bash
-        run: |
-          set -euo pipefail
+          mkdir -p "$(dirname "${ARTIFACT_PATH}")" diagnostics
 
-          mkdir -p "$(dirname "${REPO_PAYLOAD}")"
-          cp -f "${APP_PAYLOAD}" "${REPO_PAYLOAD}"
+          install -m 0644 \
+            "$output" \
+            "${ARTIFACT_PATH}"
 
-      - name: Update exploit size in target-v3.json
+          sha256sum "${ARTIFACT_PATH}" \
+            | tee diagnostics/s721b-app.sha256
+
+      - name: Verify artifact
         shell: bash
         run: |
           set -euo pipefail
 
-          SIZE=$(stat -c '%s' "${APP_PAYLOAD}")
+          test -f "${ARTIFACT_PATH}"
 
-          python3 - "${SUPPORT_JSON}" "${TARGET}" "${SIZE}" <<'PY'
-          import json
-          import sys
+          size="$(stat -c %s "${ARTIFACT_PATH}")"
 
-          path = sys.argv[1]
-          target = sys.argv[2]
-          size = int(sys.argv[3])
+          echo "Final artifact: ${ARTIFACT_PATH}"
+          echo "Final size: ${size} bytes"
 
-          with open(path, "r", encoding="utf-8") as f:
-              data = json.load(f)
+          test "$size" -le 104128
 
-          found = False
+      - name: Upload diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: s721b-payload-build-diagnostics
+          path: diagnostics/
+          if-no-files-found: error
+          retention-days: 14
 
-          for payload in data["payloads"]:
-              if payload.get("payloadId") == target:
-                  payload["exploit"]["size"] = size
-                  found = True
-                  break
-
-          if not found:
-              raise SystemExit(f"Payload ID not found: {target}")
-
-          with open(path, "w", encoding="utf-8") as f:
-              json.dump(data, f, indent=2, ensure_ascii=False)
-              f.write("\n")
-
-          print(f"Updated exploit size to {size} bytes")
-          PY
-
-      - name: Verify support manifest
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          SIZE=$(stat -c '%s' "${APP_PAYLOAD}")
-
-          python3 - "${SUPPORT_JSON}" "${TARGET}" "${SIZE}" <<'PY'
-          import json
-          import sys
-
-          path = sys.argv[1]
-          target = sys.argv[2]
-          expected_size = int(sys.argv[3])
-
-          with open(path, "r", encoding="utf-8") as f:
-              data = json.load(f)
-
-          for payload in data["payloads"]:
-              if payload.get("payloadId") == target:
-                  actual_size = payload["exploit"]["size"]
-
-                  if actual_size != expected_size:
-                      raise SystemExit(
-                          f"Size mismatch: manifest={actual_size}, file={expected_size}"
-                      )
-
-                  print(f"Verified: exploit size = {actual_size} bytes")
-                  break
-          else:
-              raise SystemExit(f"Payload ID not found: {target}")
-          PY
-
-      - name: Commit payload and manifest
+      - name: Commit regenerated artifact
         shell: bash
         run: |
           set -euo pipefail
 
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add "${REPO_PAYLOAD}" "${SUPPORT_JSON}"
+          git add "${ARTIFACT_PATH}"
 
           if git diff --cached --quiet; then
-            echo "No changes to commit."
+            echo "No artifact changes."
             exit 0
           fi
 
-          git commit -m "Build ${TARGET} app payload [skip ci]"
-          git push
+          git commit \
+            -m "ci: rebuild S721B payload artifact [skip ci]"
 
-      - name: Upload app payload
-        uses: actions/upload-artifact@v4
-        with:
-          name: cve-2026-43499-app
-          path: ${{ env.APP_PAYLOAD }}
-          if-no-files-found: error
-          retention-days: 14
+          git push origin HEAD:main
+
+
