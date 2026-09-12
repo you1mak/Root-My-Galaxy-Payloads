@@ -10,7 +10,6 @@ on:
       - 'support/targets-v3.json'
       - 'tools/**'
       - '.github/workflows/**'
-
   workflow_dispatch:
     inputs:
       target:
@@ -31,7 +30,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NDK_VERSION: '30.0.16248370'
   B_TARGET: r12s-S721BXXSCDZF3
   W_TARGET: r12s-S721WVLSCDZF4
   B_ARTIFACT_PATH: artifacts/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
@@ -49,30 +47,27 @@ jobs:
         with:
           fetch-depth: 2
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
+      - name: Set up NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
         with:
-          packages: |
-            platform-tools
-            platforms;android-36
-            ndk;30.0.16248370
-          accept-android-sdk-licenses: true
+          ndk-version: 30.0.16248370
+          add-to-path: false
+          local-cache: true
 
       - name: Configure NDK
         shell: bash
         run: |
           set -euo pipefail
 
-          NDK_HOME="${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}"
+          NDK_HOME="${{ steps.setup-ndk.outputs.ndk-path }}"
 
           test -d "$NDK_HOME"
           test -x "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android36-clang"
 
           echo "ANDROID_NDK_HOME=$NDK_HOME" >> "$GITHUB_ENV"
 
-          echo "Using NDK:"
-          echo "$NDK_HOME"
-
+          echo "ANDROID_NDK_HOME=$NDK_HOME"
           echo "Compiler:"
           "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android36-clang" --version
 
@@ -210,3 +205,5 @@ jobs:
 
           git commit -m "ci: rebuild S721 FE payload artifacts [skip ci]"
           git push origin HEAD:main
+
+
