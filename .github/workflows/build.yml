@@ -18,6 +18,7 @@ env:
   NDK_VERSION: '30.0.16248370'
   APP_PAYLOAD: build/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
   REPO_PAYLOAD: artifacts/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
+  SUPPORT_JSON: support/target-v3.json
 
 jobs:
   build:
@@ -68,7 +69,11 @@ jobs:
         run: |
           set -euo pipefail
           test -f "${APP_PAYLOAD}"
-          stat -c 'size=%s bytes' "${APP_PAYLOAD}"
+
+          SIZE=$(stat -c '%s' "${APP_PAYLOAD}")
+
+          echo "Payload size: ${SIZE} bytes"
+
           file "${APP_PAYLOAD}"
           sha256sum "${APP_PAYLOAD}"
 
@@ -76,10 +81,80 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           mkdir -p "$(dirname "${REPO_PAYLOAD}")"
           cp -f "${APP_PAYLOAD}" "${REPO_PAYLOAD}"
 
-      - name: Commit payload to repository
+      - name: Update exploit size in target-v3.json
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SIZE=$(stat -c '%s' "${APP_PAYLOAD}")
+
+          python3 - "${SUPPORT_JSON}" "${TARGET}" "${SIZE}" <<'PY'
+          import json
+          import sys
+
+          path = sys.argv[1]
+          target = sys.argv[2]
+          size = int(sys.argv[3])
+
+          with open(path, "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          found = False
+
+          for payload in data["payloads"]:
+              if payload.get("payloadId") == target:
+                  payload["exploit"]["size"] = size
+                  found = True
+                  break
+
+          if not found:
+              raise SystemExit(f"Payload ID not found: {target}")
+
+          with open(path, "w", encoding="utf-8") as f:
+              json.dump(data, f, indent=2, ensure_ascii=False)
+              f.write("\n")
+
+          print(f"Updated exploit size to {size} bytes")
+          PY
+
+      - name: Verify support manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SIZE=$(stat -c '%s' "${APP_PAYLOAD}")
+
+          python3 - "${SUPPORT_JSON}" "${TARGET}" "${SIZE}" <<'PY'
+          import json
+          import sys
+
+          path = sys.argv[1]
+          target = sys.argv[2]
+          expected_size = int(sys.argv[3])
+
+          with open(path, "r", encoding="utf-8") as f:
+              data = json.load(f)
+
+          for payload in data["payloads"]:
+              if payload.get("payloadId") == target:
+                  actual_size = payload["exploit"]["size"]
+
+                  if actual_size != expected_size:
+                      raise SystemExit(
+                          f"Size mismatch: manifest={actual_size}, file={expected_size}"
+                      )
+
+                  print(f"Verified: exploit size = {actual_size} bytes")
+                  break
+          else:
+              raise SystemExit(f"Payload ID not found: {target}")
+          PY
+
+      - name: Commit payload and manifest
         shell: bash
         run: |
           set -euo pipefail
@@ -87,7 +162,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add "${REPO_PAYLOAD}"
+          git add "${REPO_PAYLOAD}" "${SUPPORT_JSON}"
 
           if git diff --cached --quiet; then
             echo "No changes to commit."
