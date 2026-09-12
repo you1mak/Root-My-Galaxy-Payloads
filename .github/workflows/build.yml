@@ -18,7 +18,7 @@ env:
   NDK_VERSION: '30.0.16248370'
   APP_PAYLOAD: build/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
   REPO_PAYLOAD: artifacts/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
-  SUPPORT_JSON: support/target-v3.json
+  SUPPORT_JSON: support/targets-v3.json
 
 jobs:
   build:
