@@ -11,12 +11,13 @@ on:
       - '.github/workflows/build.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   TARGET: r12s-S721BXXSCDZF3
   NDK_VERSION: '30.0.16248370'
   APP_PAYLOAD: build/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
+  REPO_PAYLOAD: artifacts/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
 
 jobs:
   build:
@@ -67,9 +68,41 @@ jobs:
         run: |
           set -euo pipefail
           test -f "${APP_PAYLOAD}"
-          stat -c 'size=%s bytes' "${APP_PAYLOAD}"
+          SIZE=$(stat -c '%s' "${APP_PAYLOAD}")
+          echo "APP PAYLOAD SIZE: ${SIZE} bytes"
           file "${APP_PAYLOAD}"
           sha256sum "${APP_PAYLOAD}"
+
+      - name: Copy payload into repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "${REPO_PAYLOAD}")"
+          cp "${APP_PAYLOAD}" "${REPO_PAYLOAD}"
+
+          SIZE=$(stat -c '%s' "${REPO_PAYLOAD}")
+          echo "REPOSITORY PAYLOAD: ${REPO_PAYLOAD}"
+          echo "SIZE: ${SIZE} bytes"
+
+      - name: Commit payload to repository
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add "${REPO_PAYLOAD}"
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          SIZE=$(stat -c '%s' "${REPO_PAYLOAD}")
+
+          git commit -m "Build ${TARGET} app payload (${SIZE} bytes)"
+          git push
 
       - name: Upload app payload
         uses: actions/upload-artifact@v4
@@ -78,3 +111,5 @@ jobs:
           path: ${{ env.APP_PAYLOAD }}
           if-no-files-found: error
           retention-days: 14
+
+
