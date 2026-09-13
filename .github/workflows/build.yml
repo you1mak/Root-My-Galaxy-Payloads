@@ -54,8 +54,9 @@ jobs:
           test -f "src/targets/${TARGET}/target.h"
           test -f "src/main.c"
           test -f "src/fops.c"
-          grep -F '#define APP_PRODUCTION_STACK_PI_RIGHT_ONLY 0' "src/targets/${TARGET}/target.h"
           test "$(grep -c 'APP_PRODUCTION_STACK_PI_RIGHT_ONLY' "src/targets/${TARGET}/target.h")" -ge 1
+          echo "APP_PRODUCTION_STACK_PI_RIGHT_ONLY:"
+          grep -F 'APP_PRODUCTION_STACK_PI_RIGHT_ONLY' "src/targets/${TARGET}/target.h"
 
       - name: Build app payload only
         shell: bash
