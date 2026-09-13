@@ -16,7 +16,7 @@ permissions:
 env:
   TARGET: r12s-S721BXXSCDZF3
   NDK_VERSION: '30.0.16248370'
-  APP_PAYLOAD: build/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
+  APP_PAYLOAD: build/r12s-S721BXXSCDZF3/cve-2026-43499-app.release.so
   REPO_PAYLOAD: artifacts/r12s-S721BXXSCDZF3/cve-2026-43499-app.so
 
 jobs:
@@ -55,22 +55,30 @@ jobs:
           test -f "src/main.c"
           test -f "src/fops.c"
           test "$(grep -c 'APP_PRODUCTION_STACK_PI_RIGHT_ONLY' "src/targets/${TARGET}/target.h")" -ge 1
-          echo "APP_PRODUCTION_STACK_PI_RIGHT_ONLY:"
           grep -F 'APP_PRODUCTION_STACK_PI_RIGHT_ONLY' "src/targets/${TARGET}/target.h"
 
-      - name: Build app payload only
+      - name: Clean build
         shell: bash
         run: |
           set -euo pipefail
-          make TARGET="${TARGET}" "${APP_PAYLOAD}"
+          make clean TARGET="${TARGET}"
+
+      - name: Build release app payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          make TARGET="${TARGET}" release
 
       - name: Verify output
         shell: bash
         run: |
           set -euo pipefail
           test -f "${APP_PAYLOAD}"
+
           SIZE=$(stat -c '%s' "${APP_PAYLOAD}")
+
           echo "APP PAYLOAD SIZE: ${SIZE} bytes"
+
           file "${APP_PAYLOAD}"
           sha256sum "${APP_PAYLOAD}"
 
@@ -78,10 +86,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           mkdir -p "$(dirname "${REPO_PAYLOAD}")"
           cp "${APP_PAYLOAD}" "${REPO_PAYLOAD}"
 
           SIZE=$(stat -c '%s' "${REPO_PAYLOAD}")
+
           echo "REPOSITORY PAYLOAD: ${REPO_PAYLOAD}"
           echo "SIZE: ${SIZE} bytes"
 
@@ -102,15 +112,13 @@ jobs:
 
           SIZE=$(stat -c '%s' "${REPO_PAYLOAD}")
 
-          git commit -m "Build ${TARGET} app payload (${SIZE} bytes)"
+          git commit -m "Build ${TARGET} release payload (${SIZE} bytes)"
           git push
 
       - name: Upload app payload
         uses: actions/upload-artifact@v4
         with:
           name: cve-2026-43499-app
-          path: ${{ env.APP_PAYLOAD }}
+          path: ${{ env.REPO_PAYLOAD }}
           if-no-files-found: error
           retention-days: 14
-
-
