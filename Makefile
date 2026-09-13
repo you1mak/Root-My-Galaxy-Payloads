@@ -29,7 +29,8 @@ APP_RELEASE_SIZE := 104128
 ROOT_HELPER := $(OUTDIR)/cve-2026-43499-root
 
 TARGET_CFLAGS :=
-APP_RELEASE_OPT := -Oz
+
+APP_RELEASE_OPT := -Oz -fvisibility=hidden -fno-semantic-interposition
 APP_RELEASE_LINK_FLAGS := -Wl,--gc-sections -Wl,--icf=all -s
 
 PRELOAD_SRCS := \
@@ -90,7 +91,6 @@ $(APP_RELEASE): $(APP_PRELOAD_SRCS) $(TARGET_HEADER) src/offset.h src/common.h s
 	  $(APP_PRELOAD_SRCS) -shared -pthread \
 	  $(APP_RELEASE_LINK_FLAGS) -o $@
 	@test $$(stat -c %s $@) -le $(APP_RELEASE_SIZE)
-	truncate -s $(APP_RELEASE_SIZE) $@
 
 $(APP_STABLE): $(APP_PRELOAD_SRCS) $(TARGET_HEADER) src/offset.h src/common.h src/kernelsnitch/*.h | $(OUTDIR)
 	$(TARGET_CC) -DAPP_PAYLOAD=1 -fPIC -Oz -g0 -fvisibility=hidden -fno-semantic-interposition \
@@ -102,7 +102,6 @@ $(APP_STABLE): $(APP_PRELOAD_SRCS) $(TARGET_HEADER) src/offset.h src/common.h sr
 	  $(APP_PRELOAD_SRCS) -shared -pthread \
 	  -Wl,--gc-sections -Wl,--icf=all -s -o $@
 	@test $$(stat -c %s $@) -le $(APP_RELEASE_SIZE)
-	truncate -s $(APP_RELEASE_SIZE) $@
 
 info:
 	@echo "TARGET=$(TARGET)"
@@ -116,5 +115,3 @@ info:
 
 clean:
 	rm -rf $(OUTDIR)
-
-
