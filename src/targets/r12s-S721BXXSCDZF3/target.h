@@ -2,10 +2,10 @@
 #define OFFSET_H
 
 #if defined(APP_PAYLOAD) && APP_PAYLOAD
-#define BUILD_VARIANT_LABEL "essi-S721NKSSCDZF3-app-physical-p0-oracle"
+#define BUILD_VARIANT_LABEL "r12s-S721BXXSCDZF3-app-physical-p0-oracle"
 #define APP_PHYS_P0_ORACLE 1
 #else
-#define BUILD_VARIANT_LABEL "essi-S721NKSSCDZF3-root-umh"
+#define BUILD_VARIANT_LABEL "r12s-S721BXXSCDZF3-root-umh"
 #endif
 
 #ifndef BUILD_FINGERPRINT
@@ -60,7 +60,7 @@
 #define P0_ORACLE_GATE_OBJECT_INDEX 1
 #define P0_ORACLE_PROBE_OFFSET 0x1f0000ULL
 #define P0_FINGERPRINT_HEADER \
-  "targets/essi-S721NKSSCDZF3/p0_fingerprint.h"
+  "targets/r12s-S721BXXSCDZF3/p0_fingerprint.h"
 #endif
 
 #define KERNELSNITCH_IDENTITY_START 0xffffff8000000000ULL
